@@ -135,7 +135,7 @@ Contains
     Call gauleg(0.0_pr,1.0_pr,t,w,n_g_coul)
     Do j=1,n_g_coul
        mu_g_coul(j) = bmax*Sqrt(one-t(j)**2)/t(j)
-       V_g_coul(j) = two/Sqrt(Pi)*w(j)/bmax/(one-t(j)**2)**1.5
+       V_g_coul(j) = two/Sqrt(Pi)*w(j)/bmax/(one-t(j)**2)**1.5_pr
     End Do
   End Subroutine recompute_coulomb_expansion
   !=======================================================================
@@ -380,7 +380,8 @@ Contains
     Case (5) ! Jacobi polynomials
        AB=ALPHA+BETA
        ABI=2.0_pr+AB
-       MUZERO=2.0_pr**(AB+1.0_pr)*pr_gamma(ALPHA+1.0_pr)*pr_gamma(BETA+1.0_pr)/pr_gamma(ABI)
+       !MUZERO=2.0_pr**(AB+1.0_pr)*pr_gamma(ALPHA+1.0_pr)*pr_gamma(BETA+1.0_pr)/pr_gamma(ABI)
+       MUZERO=Exp((AB+one)*Log(two)+Log(pr_gamma(ALPHA+one))+Log(pr_gamma(BETA+one))-Log(pr_gamma(ABI)))
        A(1)=(BETA-ALPHA)/ABI
        B(1)=Sqrt(4.0_pr*(1.0_pr+ALPHA)*(1.0_pr+BETA)/((ABI+1.0_pr)*ABI*ABI))
        A2B2=BETA*BETA-ALPHA*ALPHA
@@ -413,7 +414,7 @@ Contains
     Integer(ipr) :: I,J,K,L,M,II,MML
     Real(pr) :: MACHEP,P,G,R,S,C,F,B
     !MACHEP=16.0_pr**(-14)
-    MACHEP=epsilon(1.0d0)
+    MACHEP=epsilon(1.0_pr)
     IERR=0
     If(N.Eq.1) Return
     E(N)=0.0_pr

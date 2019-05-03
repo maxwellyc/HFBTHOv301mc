@@ -180,7 +180,7 @@ Contains
     !
     z2=z*z; z3=z2*z; z4=z3*z; z5=z4*z; z6=z5*z; z7=z6*z; z8=z7*z
     rrr4=rrr*rrr; rrr6=rrr4*rrr
-    !
+    ! MCcomment. These are in cylindrical coordinates, rrr = (x^2+y^2)
     Qval(0) =               sqr4pi
     Qval(1) = Sqrt(three)  *sqr4pi          * z
     Qval(2) = Sqrt(five)   *sqr4pi*half     * (two*z2-        rrr)

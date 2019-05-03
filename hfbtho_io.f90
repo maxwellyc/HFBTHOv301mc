@@ -96,12 +96,17 @@ Module HFBTHO_io
 
   Implicit None
 
-  Integer(ipr), PUBLIC, SAVE :: VERSION_DATA = 4 !< Version number of the binary file.
+  Integer(ipr), PUBLIC, SAVE :: VERSION_DATA = 4 !< Version number of the output binary file.
                                                  ! VERSION_DATA=3 -> version without rk and ak
                                                  ! VERSION_DATA=2 -> version 2.00d of HFBTHO
                                                  ! VERSION_DATA=1 -> 1.66 (not implemented)
+  Integer(ipr), PUBLIC, SAVE :: VERSION_READ = 4 !< Version number of the input binary file.
   Character(Len=50), PUBLIC, SAVE :: welfile !< Name of the binary file
 
+  ! Characteristics of the basis read from file
+  Integer(ipr), Allocatable, PUBLIC, SAVE :: nr_r(:),nz_r(:),nl_r(:),ns_r(:)
+  Integer(ipr), PUBLIC, SAVE :: ngh_r,ngl_r,nleg_r
+  Real(pr), Allocatable, PUBLIC, SAVE :: xh_r(:),xl_r(:),wh_r(:),wl_r(:)
   ! Characteristics of the grids, Cartesian and polar
   Integer(ipr), PUBLIC, SAVE :: Ngrid_x=17,Ngrid_y=17,Ngrid_z=17,Ngrid
   Integer(ipr), Allocatable, PUBLIC, SAVE :: ixvect(:),iyvect(:),izvect(:),irhovect(:)
@@ -156,8 +161,10 @@ Contains
     Write(filelabel,'(a1,a3,a1,a3)')  sinin,snpr(1),'_',snpr(2)
     !
 #if(DO_MASSTABLE==1)
-    If(iLST1.Le.0) Write(welfile,'(a8,a5,a4)')  FILELABEL,row_string,'.hel'
-    If(iLST1.Gt.0) Write(welfile,'(a8,a5,a4)')  FILELABEL,row_string,'.tel'
+    ! MCedit 1/8/19 commented out so we don't get millions of restart files in
+    ! mass-table calculations
+    !If(iLST1.Le.0) Write(welfile,'(a8,a7,a4)')  FILELABEL,row_string,'.hel'
+    !If(iLST1.Gt.0) Write(welfile,'(a8,a7,a4)')  FILELABEL,row_string,'.tel'
 #elif(DO_PES==1)
     If(iLST1.Le.0) Write(welfile,'("hfbtho_output",a7,a4)')  row_string,'.hel'
     If(iLST1.Gt.0) Write(welfile,'("hfbtho_output",a7,a4)')  row_string,'.tel'
@@ -184,7 +191,6 @@ Contains
     Integer(ipr), INTENT(INOUT) :: iexit !> Integer giving the exit status of the routine (0: OK, >0: not OK)
     Character(50) :: action
     Character(8) :: filelabel
-    Integer(ipr) :: VERSION_read
     ! label organization
     Call FileLabels(NPR,ININ,FILELABEL)
     If(ierror_flag.Ne.0) Return
@@ -201,9 +207,9 @@ Contains
           iexit = check_file(welfile, action)
           If(iexit==0) Then
              ! Read the version number of the file
-             VERSION_read = version_number(welfile)
+             VERSION_READ = version_number(welfile)
              ! If version is current, try to read the data
-             If(VERSION_read==VERSION_DATA) Then
+             If(VERSION_READ==VERSION_DATA) Then
                 Call read_data(iexit)
              Else
                 ! Close and reopen the file
@@ -225,7 +231,8 @@ Contains
        iexit = check_file(welfile, action)
        If(iexit==0) Then
           Call write_version()
-          Call write_data()
+          If (VERSION_DATA.Eq.2) Call write_data_old()
+          If (VERSION_DATA.Eq.4) Call write_data()
           !Call cartesian_grid()
        Else
           iexit=1
@@ -325,8 +332,8 @@ Contains
     Read(lwin,Err=100,End=100) npr11,npr1,ngh1,ngl1,n001,nb1,nt1
     counterLine = counterLine+1
     If(Abs(n001).Ne.Abs(n00).And.nb1.Ne.nb) go to 100
-    Read(lwin,Err=100,End=100) b01,bz1,bp1,beta1,si,etot,rms,bet,xmix,v0r,v1r,pwir, &
-                               del,ept,ala,ala2,alast,tz1,varmas,varmasNZ,pjmassNZ, &
+    Read(lwin,Err=100,End=100) b01,bz1,bp1,beta1,siold,etot,rms,bet,xmix,v0r,v1r,pwir, &
+                               del,ept,ala,ala2,alast,tz,varmas,varmasNZ,pjmassNZ, &
                                ass,skass
     brin=zero; bbroyden='L'; !si=one;
     counterLine = counterLine+1
@@ -365,9 +372,9 @@ Contains
     End Do
     counterLine = counterLine+1
     ! blocking
-    Read(lwin,ERR=100,End=100)  bloall1
+    Read(lwin,ERR=100,End=100) bloall1
     counterLine = counterLine+1
-    Read(lwin,ERR=100,End=100)  bloblo,blo123,blok1k2,blomax,bloqpdif
+    Read(lwin,ERR=100,End=100) bloblo,blo123,blok1k2,blomax,bloqpdif
     counterLine = counterLine+1
     If(bloall1.Ne.bloall) go to 100
     !tel
@@ -417,14 +424,14 @@ Contains
     Integer(ipr) :: switch_to_THO_r, projection_is_on_r
     Logical :: collective_inertia_r, fission_fragments_r, pairing_regularization_r, localization_functions_r, &
                set_temperature_r, set_neck_constrain_r
-    Integer(ipr) :: Z_r,N_r,n00_r,nb_r,nt_r,ngh_r,ngl_r,nleg_r
-    Integer(ipr) :: nr_r,nz_r,nl_r,ns_r,numberCons_r,lambdaMax_r
-    Integer(ipr) :: NDCOMP_r,NOCOMP_r
-    Real(pr) :: b0_r,bz_r,bp_r,neckLag_r,neckRequested_r,pwi_r,tz_r,varmas_r,varmasNZ_r
+    Integer(ipr) :: Z_r,N_r,n00_r,nb_r,nt_r
+    Integer(ipr) :: numberCons_r,lambdaMax_r
+    Integer(ipr) :: NDCOMP_r,NOCOMP_r,ibasis
+    Real(pr) :: b0_r,bz_r,bp_r,neckLag_r,neckRequested_r,pwi_r,varmas_r,varmasNZ_r
+    Real(pr), Dimension(2) :: tz_r
     ! Arrays
     Integer(ipr), Allocatable :: ID_r(:),multLambda_r(:)
     Real(pr), Allocatable :: multRequested_r(:),multLag_r(:)
-    Real(pr), Allocatable :: xh_r(:),xl_r(:),wh_r(:),wl_r(:)
     !---------------------------------------------------------------------
     ! Read data
     !---------------------------------------------------------------------
@@ -452,17 +459,20 @@ Contains
              Write(6,'("The code will start from scratch")')
              iexit=1
           End If
-          Allocate(xh_r(1:ngh_r),xl_r(1:ngl_r),wh_r(1:ngh_r),wl_r(1:ngl_r))
+          If(.Not.Allocated(xh_r)) Allocate(xh_r(1:ngh_r),xl_r(1:ngl_r),wh_r(1:ngh_r),wl_r(1:ngl_r))
           Read(lwin,Err=100,End=100) xh_r,xl_r,wh_r,wl_r
        End If
        ! Quantum numbers and \Omega-blocks information
        If(Trim(key)=='QuantNum') Then
           Allocate(ID_r(nb_r))
           Read(lwin,Err=100,End=100) ID_r
+          If(.Not.Allocated(nr_r)) Allocate(nr_r(1:nt_r),nz_r(1:nt_r),nl_r(1:nt_r),ns_r(1:nt_r))
+          ibasis=0
           Do ib=1,nb_r
              nd=ID_r(ib)
              Do n1=1,nd
-                Read(lwin,Err=100,End=100) nr_r,nz_r,nl_r,ns_r
+                ibasis=ibasis+1;
+                Read(lwin,Err=100,End=100) nr_r(ibasis),nz_r(ibasis),nl_r(ibasis),ns_r(ibasis)
              End Do
           End Do
           ! Check if the file has a different basis
@@ -475,11 +485,12 @@ Contains
           Read(lwin,Err=100,End=100) pwi_r,del,ept,ala,ala2,alast
           Read(lwin,Err=100,End=100) tz_r,varmas_r,varmasNZ_r,pjmassNZ,ass,skass
           siold=si
+          tz=tz_r; varmas=varmas_r; varmasNZ=varmasNZ_r; pwi=pwi_r
        End If
        ! Constraints: requested values, Lagrange parameters
        If(Trim(key)=='Constrai') Then
           Read(lwin,Err=100,End=100) numberCons_r,lambdaMax_r
-          Allocate(multLambda_r(1:numberCons_r),multRequested_r(0:lambdaMax_r),multLag_r(1:lambdaMax_r))
+          If(.Not.Allocated(multLambda_r)) Allocate(multLambda_r(1:numberCons_r),multRequested_r(0:lambdaMax_r),multLag_r(1:lambdaMax_r))
           Read(lwin,Err=100,End=100) multLambda_r
           Read(lwin,Err=100,End=100) multRequested_r
           Read(lwin,Err=100,End=100) multLag_r
@@ -536,9 +547,6 @@ Contains
        End If
        ! Blocking
        If(Trim(key)=='Blocking') Then
-          Do ib=1,2
-             Call blosort(ib,blomax(ib))
-          End Do
           Read(lwin,Err=100,End=100) bloall_r
           Read(lwin,Err=100,End=100) bloblo,blo123,blok1k2,blomax,bloqpdif
        End If
@@ -610,7 +618,7 @@ Contains
   !=======================================================================
   Subroutine write_data()
     Implicit None
-    Integer(ipr) :: ib,nd,n1,ibasis,nla,nra,nza,nsa
+    Integer(ipr) :: it,ib,nd,n1,ibasis,nla,nra,nza,nsa
 
     ! Metadata: N, Z, force, optional flags
     Write(lwou) 'Metadata'
@@ -681,8 +689,8 @@ Contains
     Write(lwou) dvp
     ! Blocking
     Write(lwou) 'Blocking'
-    Do ib=1,2
-       Call blosort(ib,blomax(ib))
+    Do it=1,2
+       Call blosort(it,blomax(it))
     End Do
     Write(lwou) bloall
     Write(lwou) bloblo,blo123,blok1k2,blomax,bloqpdif
@@ -699,8 +707,8 @@ Contains
        If(iLST.Gt.0) Then
           If(Allocated(fdsx)) Then
              Write(lwou) decay,rmm3,cmm3,amm3,bmm3,itass,iqqmax
-             Write(lwou) fdsx,fdsy,fdsy1,fdsy2,fdsy3,fspb0,fspc0,fspd0  &
-                  ,fspb1,fspc1,fspd1,fspb2,fspc2,fspd2,fspb3,fspc3,fspd3
+             Write(lwou) fdsx,fdsy,fdsy1,fdsy2,fdsy3,fspb0,fspc0,fspd0, &
+                         fspb1,fspc1,fspd1,fspb2,fspc2,fspd2,fspb3,fspc3,fspd3
           End If
        End If
     End If
@@ -741,8 +749,8 @@ Contains
   !=======================================================================
   Subroutine write_data_old()
     Implicit None
-    Integer(ipr)  :: iw,N1,ND,ib,ibasis
-    Integer(ipr)  :: npr1,npr11,NLANSA1,NLA,NRA,NZA,NSA
+    Integer(ipr) :: iw,N1,ND,it,ib,ibasis
+    Integer(ipr) :: npr1,npr11,NLANSA1,NLA,NRA,NZA,NSA
     !
     npr11=npr(1); npr1=npr(2)
     Write(lwou) npr11,npr1,ngh,ngl,n00,nb,nt
@@ -766,8 +774,8 @@ Contains
     !---------------------------------------------------------------------
     ! blocking: sort blocking candidates first
     !---------------------------------------------------------------------
-    Do ib=1,2
-       Call blosort(ib,blomax(ib))
+    Do it=1,2
+       Call blosort(it,blomax(it))
     End Do
     Write(lwou) bloall
     Write(lwou) bloblo,blo123,blok1k2,blomax,bloqpdif
@@ -775,8 +783,8 @@ Contains
     If(iLST.Gt.0) Then
        If(Allocated(fdsx)) Then
           Write(lwou) decay,rmm3,cmm3,amm3,bmm3,itass,iqqmax
-          Write(lwou) fdsx,fdsy,fdsy1,fdsy2,fdsy3,fspb0,fspc0,fspd0  &
-               ,fspb1,fspc1,fspd1,fspb2,fspc2,fspd2,fspb3,fspc3,fspd3
+          Write(lwou) fdsx,fdsy,fdsy1,fdsy2,fdsy3,fspb0,fspc0,fspd0, &
+                      fspb1,fspc1,fspd1,fspb2,fspc2,fspd2,fspb3,fspc3,fspd3
        End If
     End If
     Close(lwou)
@@ -1101,7 +1109,7 @@ Contains
     Integer(ipr), Intent(In) :: Nqp
     Integer(ipr) :: iwave,igrid,ix,iy,iz,ihli
     Real(pr) :: ept1,whl,akn2,RHO_0,adn,del1
-    Complex(pr) :: kap_uu,kap_dd,kap_ud,kap_du
+    Complex(pr) :: kap_uu,kap_dd
     Complex(pr) :: ron_uu,ron_dd,rop_uu,rop_dd
     Complex(pr) :: Epair,dd1n,summ,rsa0,delta
     Complex(pr), Allocatable :: kappa_uu(:),kappa_dd(:),kappa_ud(:),kappa_du(:)
@@ -1180,10 +1188,10 @@ Contains
        ix=ixvect(igrid); iy=iyvect(igrid); iz=izvect(igrid)
        whl=wx_trap(ix)*wy_trap(iy)*wz_trap(iz)*dx_trap*dy_trap*dz_trap
        summ = summ + whl &
-            *( Conjg(HFBspinor_Un_up(iwave,igrid))*HFBspinor_Un_up(jwave,igrid) &
-             + Conjg(HFBspinor_Vn_up(iwave,igrid))*HFBspinor_Vn_up(jwave,igrid) &
-             + Conjg(HFBspinor_Un_down(iwave,igrid))*HFBspinor_Un_down(jwave,igrid) &
-             + Conjg(HFBspinor_Vn_down(iwave,igrid))*HFBspinor_Vn_down(jwave,igrid) )
+            *Real( Conjg(HFBspinor_Un_up(iwave,igrid))*HFBspinor_Un_up(jwave,igrid) &
+                 + Conjg(HFBspinor_Vn_up(iwave,igrid))*HFBspinor_Vn_up(jwave,igrid) &
+                 + Conjg(HFBspinor_Un_down(iwave,igrid))*HFBspinor_Un_down(jwave,igrid) &
+                 + Conjg(HFBspinor_Vn_down(iwave,igrid))*HFBspinor_Vn_down(jwave,igrid) )
     End Do
     Write(6,'("BOGO: iwave=",i4," jwave=",i4," summ = ",f20.14)') iwave,jwave,summ
   End Subroutine test_normality_bogo

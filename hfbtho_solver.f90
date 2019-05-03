@@ -351,15 +351,15 @@ Contains
           ! Preliminary constrained calculations
           !-------------------------------------------------------------
           If(kickoff.Gt.0) Then
-             ! For best outcomes, use epsi = 1.0, maxi = 20   MCcomment 9/7/18.
+             ! For best outcomes, use epsi=1.0, maxi=20. MCcomment 12/22/18.
              ! This is only tested on 288Fm, may vary for different system
              icstr0=icstr; epsi0=epsi; ! remember accuracy
              icstr=1                   ! constraint true
-             epsi=1.0_pr               ! converge criteria for kickoff !MCedit 05/23/18
+             epsi=1.0                  ! converge criteria for kickoff !MCedit 12/22/18
              if(is_nedf) then
                 iterMax = maxi; maxi = 25  !MCcomment I didn't test this out for is_nedf = .True.
              else
-                iterMax = maxi; maxi = 20  !MCedit 10/03/18
+                iterMax = maxi; maxi = 20  
              endif
              numberCons=0
              Do l=1,lambdaMax
@@ -374,7 +374,7 @@ Contains
                     ,', Max kickoff steps: ', maxi, ', epsilon: ' ,epsi ,'.'
                    Write(iw,'(/,a,2f15.8,/)') 'Initial constraints Q20, Q30: ',Q20, Q30
                 Else
-                   Write(iw,'(/,a,a,i2,a,f15.8,a,/)') '  ### INITIAL STAGE(constrained calculations, reflection symmetry used)' &
+                   Write(iw,'(/,a,a,i2,a,f15.8,a,/)') '  ### INITIAL STAGE(constrained calculations, no reflection symmetry)' &
                     ,', Max kickoff steps: ', maxi, ', epsilon: ' ,epsi ,'.'
                    Write(iw,'(/,a,2f15.8,/)') 'Initial constraints Q20, Q30: ',Q20, Q30
                 End If
@@ -2459,10 +2459,9 @@ Contains
     preset_forces(40) = 'HFB1'
     preset_forces(41) = 'SKM*mod'
     preset_forces(42) = 'SV-min'  !EOedit for SV-min
-    preset_forces(43) = 'UNE1-S0' !EOedit for UNEDF1-SO
     !
     counter=0
-    !Do i=1, 41
+    !Do i=1, 43
     Do i=1, 43   !EOedit for SV-min and UNEDF1-SO
        If(Trim(skyrme_INI).Eq.Trim(preset_forces(i))) Then
           counter=1
@@ -2611,7 +2610,7 @@ Contains
     ! output control
     !------------------------------------
     If(n00_INI.Gt.0) Then
-       Print_Screen=.False. !MCedit 10/03/18
+       Print_Screen= .False. !MCedit 10/03/18 Stop printing tons of s.p. states
 #if(DO_MASSTABLE==1 || DRIP_LINES==1 || DO_PES==1)
        if(mpi_size.eq.1) then
           lfile=lout+1                              ! condensed output to screen & full thoout.dat file
@@ -3488,7 +3487,7 @@ Contains
     if(mpi_taskid.eq.0) then
         write(*,'(a)') "Row_id  Z   N   Q20          Q30           beta_deformation         b2_0            b3_0  " !MCedit 10/19/18
     endif
-    write(*,'(a7,2i5,5f15.8)') row_string,Z_chain,N_chain,Q20,Q30,beta_deformation,b2_0,b3_0 !MCedit 10/19/18
+    !write(*,'(a7,2i5,5f15.8)') row_string,Z_chain,N_chain,Q20,Q30,beta_deformation,b2_0,b3_0 !MCedit 1/15/19
     !-----------------------------------
     ! Saxon-Woods potentials
     !-----------------------------------
@@ -7605,11 +7604,11 @@ Contains
              z=fh(ihli); zz=z*z; rrr=zz+fl(ihli)**2
              !MCcomment, the coefficients for p2~4 are matched with legendre polynomials, thus later on the q2=two*q2 etc. is to get the numerator portion of spherical harmonics in spherical coordinates, which are the physical moments. rrr = x^2+y^2+z^2
              p2=p32*zz   -half*rrr           !p2 = 1/2*(3z^2 - r^2)
+             p3=p53*z*p2 -p23*rrr*z          !p3 = z/2*(5z^2 - 3r^2)
              If(Parity) Then
-                p3 = 0
-             Else
-                p3=p53*z*p2 -p23*rrr*z          !p3 = z/2*(5z^2 - 3r^2)
-             End If
+               p3 = 0
+             End If            ! MCedit 4/16/19 Q30=0 if parity True
+             !p3=p12*z*(five*zz-three*rrr)
              p4=p74*z*p3 -p34*rrr*p2         !p4 = 1/8*(35z^4 - 30z^2*r^2 + 3r^4)
              !p4=p18*(35.0_pr * zz**2 - 30.0_pr * zz * rrr + three* rrr**2)
              row=whl*rn
@@ -7647,7 +7646,7 @@ Contains
           Do it=itmin,itmax
              rms(it)=Sqrt(rms(it)/xn(it))
              q2(it)=two*q2(it)          !Qnp=<2r^2P_2(teta)>=<2z^2-x^2-y^2>
-             q3(it)=ffdef65*q3(it)      !MCedit RHS(right hand side) q3 = <p3> = <z/2*(5z^2 - 3r^2)>
+             q3(it)=ffdef65*q3(it)      !MCedit RHS q3 = <p3> = ffdef65*<z/2*(5z^2 - 3r^2)>
              q4(it)=ffdef4*q4(it)       !MCedit RHS q4 = <p4> = <1/8*(35z^4 - 30z^2*r^2 + 3r^4)>
              !Hn=<8r^4P_4(teta)>=<8z^4-24z^2(x^2+y^2)+3(x^2+y^2)^2>
              def(it)=Sqrt(pi/5.0_pr)*q2(it)/(rms(it)**2*xn(it))

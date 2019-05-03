@@ -318,7 +318,7 @@ Module HFBTHO
 #elif(DRIP_LINES==1)
   Character(Len=11) :: row_string
 #else
-  Character(Len=7) :: row_string   !EOedit, to make code work for serial mode
+  Character(Len=7) :: row_string !EOedit, to make code work for serial mode
 #endif
   !---------------------------------------------------------------------
   !DripLines variable

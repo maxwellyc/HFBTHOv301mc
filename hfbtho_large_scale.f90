@@ -78,6 +78,14 @@
 !>
 !>  @author
 !>  Rodrigo Navarro Perez
+!>
+!> 05/25/18 Edited by Yuchen Cao (Maxwell), cao -at- nscl.msu.edu
+!> Edit1: Implemented Q30 to masstable mode I/O
+!> Edit2: Modified MPI routines to reduce load imbalance (previously
+!> static scheduling), removed bug where certain rank can end entire
+!> job upon completion.
+!> Edit1 requires benchmark 05/25/18
+!> Edit2 still in process 05/25/18
 !----------------------------------------------------------------------
 !  Subroutines: - read_HFBTHO_MassTable
 !               - allocate_mass_table
@@ -97,8 +105,8 @@ Contains
   !>    - The first integer read from the file gives the number of
   !>      calculations to be made (called nrows along the source code)
   !>    - Each row contains the number of protons (Z), number of neutrons
-  !>      (N), requested value for the quadrupole moment (Q20) and basis
-  !>      deformation (beta)
+  !>      (N), requested value for the quadrupole moment (Q20), requested
+  !>      value for the octupole moment (Q30) and basis deformation (beta)
   !>    - If nrows is 0 (or negative) the rest of the file will be
   !>      ignored and a regular HFBTHO calculation will be made with the
   !>      parameters given in the 'hfbtho_NAMELIST.dat' file.
@@ -110,7 +118,8 @@ Contains
   !=======================================================================
   subroutine read_HFBTHO_MassTable
     implicit none
-    integer(ipr) :: lmasstable=15,i,j
+    integer(ipr) :: lmasstable=15,i     !MCedit-NS
+    double precision :: beta3_holder    !MCedit 10/30/18, place holder for beta3 input
     open(lmasstable,file='hfbtho_MASSTABLE.dat')
     read(lmasstable,*)
     read(lmasstable,*) nRows
@@ -118,14 +127,16 @@ Contains
     allocate(   Z_masstable(0:nRows))
     allocate(   N_masstable(0:nRows))
     allocate( Q20_masstable(0:nRows))
+    allocate( Q30_masstable(0:nRows))   !MCedit 05/25/18
     allocate(beta_masstable(0:nRows))
-       Z_masstable(0) =  proton_number
+       Z_masstable(0) = proton_number
        N_masstable(0) = neutron_number
      Q20_masstable(0) = expectation_values(2)
+     Q30_masstable(0) = expectation_values(3)   !MCedit 05/25/18
     beta_masstable(0) = basis_deformation
     do i=1,nRows
        read(lmasstable,*) Z_masstable(i),N_masstable(i),Q20_masstable(i)&
-            ,beta_masstable(i)
+            ,Q30_masstable(i),beta_masstable(i), beta3_holder !MCedit 10/30/18
     enddo
     close(lmasstable)
   end subroutine read_HFBTHO_MassTable
@@ -138,11 +149,15 @@ Contains
     allocate(Z_out(1:nrows))
     allocate(N_out(1:nrows))
     allocate(Q20_in(1:nrows))
+    allocate(Q30_in(1:nrows))   !MCedit 05/25/18
     allocate(beta_in(1:nrows))
     allocate(E_HFB_out(1:nrows))
     allocate(Q20Z_out(1:nrows))
     allocate(Q20N_out(1:nrows))
     allocate(Q20T_out(1:nrows))
+    allocate(Q30Z_out(1:nrows))   !MCedit 05/25/18
+    allocate(Q30N_out(1:nrows))   !MCedit 05/25/18
+    allocate(Q30T_out(1:nrows))   !MCedit 05/25/18
   end subroutine allocate_mass_table
   !=======================================================================
   !>  The results from the HFBTHO calculation are stored in arrays.
@@ -156,6 +171,7 @@ Contains
     Z_out(icalc+1) = Z_masstable(iRow)
     N_out(icalc+1) = N_masstable(iRow)
     Q20_in(icalc+1) = Q20_masstable(iRow)
+    Q30_in(icalc+1) = Q30_masstable(iRow)   !MCedit 05/25/18
     beta_in(icalc+1) = beta_masstable(iRow)
     if(kindhfb_INI.gt.0) then
        E_HFB_out(icalc+1) = ehfb
@@ -165,6 +181,9 @@ Contains
     Q20Z_out(icalc+1) = qmoment(2,1)
     Q20N_out(icalc+1) = qmoment(2,2)
     Q20T_out(icalc+1) = qmoment(2,3)
+    Q30Z_out(icalc+1) = qmoment(3,1)     !MCedit 9/7/18
+    Q30N_out(icalc+1) = qmoment(3,2)     !MCedit 9/7/18
+    Q30T_out(icalc+1) = qmoment(3,3)     !MCedit 9/7/18
   end subroutine fill_mass_table
   !=======================================================================
   !>  The output mass table is written to the 'MassTableOut.dat' file
@@ -177,9 +196,15 @@ Contains
     if(mpi_taskid.eq.0) then
 !!#endif
        open(100,file='MassTableOut.dat')
+       write (*, '(a,a)') 'File#  Error#  Z   N    Q20_in          Q30_in         beta_in        HFB_E        Q20_Z       '&
+                               ,'Q20_N        Q20_T        Q30_Z        Q30_N        Q30_T'   !MCedit 9/14/18
+       write (100, '(a,a)') 'File#  Error#  Z   N    Q20_in          Q30_in         beta_in        HFB_E        Q20_Z       '&
+                               ,'Q20_N        Q20_T        Q30_Z        Q30_N        Q30_T'   !MCedit 9/7/18
        do i = 1,nrows
-          write(  *,'(4i5,6f15.8)') i,ierrors_out(i),Z_out(i),N_out(i),Q20_in(i),beta_in(i),E_HFB_out(i),Q20Z_out(i),Q20N_out(i),Q20T_out(i)
-          write(100,'(4i5,6f15.8)') i,ierrors_out(i),Z_out(i),N_out(i),Q20_in(i),beta_in(i),E_HFB_out(i),Q20Z_out(i),Q20N_out(i),Q20T_out(i)
+          write(  *,'(4i5,10f15.8)') i,ierrors_out(i),Z_out(i),N_out(i),Q20_in(i),Q30_in(i),beta_in(i),E_HFB_out(i),Q20Z_out(i),Q20N_out(i)&
+                                      ,Q20T_out(i),Q30Z_out(i),Q30N_out(i),Q30T_out(i)   !MCedit 9/7/18
+          write(100,'(4i5,10f15.8)') i,ierrors_out(i),Z_out(i),N_out(i),Q20_in(i),Q30_in(i),beta_in(i),E_HFB_out(i),Q20Z_out(i),Q20N_out(i)&
+                                      ,Q20T_out(i),Q30Z_out(i),Q30N_out(i),Q30T_out(i)   !MCedit 9/7/18 10f15.8
        enddo
        close(100)
 !!#if(DO_MASSTABLE==1)
@@ -191,9 +216,9 @@ Contains
   !>  well as the direction (proton or neutron) in which dripline
   !>  calculations should proceed.
   !=======================================================================
-  subroutine read_HFBTHO_StableLine
+  subroutine read_HFBTHO_StableLine ! Called only when DRIP_LINES == 1 MCcomment 9/4/18
     implicit none
-    integer(ipr) :: ldripline=15,i,j
+    integer(ipr) :: ldripline=15,i     !MCedit-NS
     open(ldripline,file='hfbtho_STABLELINE.dat')
     read(ldripline,*)
     read(ldripline,*) nRows
@@ -213,7 +238,7 @@ Contains
   !>  the file hfbtho_PES.dat. This routine is only relevant when the
   !>  DO_PES flag is activated
   !=======================================================================
-  Subroutine read_HFBTHO_PES
+  Subroutine read_HFBTHO_PES ! Called only when DO_PES == 1 MCcomment 9/4/18
     Implicit None
     Integer(ipr) :: unit_PES=15,i,j,lambda
     !
@@ -221,7 +246,7 @@ Contains
     Read(unit_PES,*)
     ! Read the total number of points in the PES and the number of constraints
     Read(unit_PES,*) npoints,ndefs
-    nRows = npoints; n_real_masstable_in = 2+ndefs
+    nRows = npoints; n_real_masstable_in = 3+ndefs  !MCedit-NS, doesn't effect masstable mode
     Read(unit_PES,*)
     ! Read the multipolarity lambda of each constraint
     Allocate(lambda_PES(1:ndefs))
@@ -233,6 +258,7 @@ Contains
     Allocate(N_PES(0:npoints))
     Allocate(Q_PES(0:npoints,1:ndefs))
     Allocate(bet2_PES(0:npoints))
+    Allocate(bet3_PES(0:npoints))   !MCedit-NS
     Allocate(bet4_PES(0:npoints))
     Z_PES(0) = proton_number
     N_PES(0) = neutron_number
@@ -241,9 +267,10 @@ Contains
        Q_PES(0,j) = expectation_values(lambda)
     End Do
     bet2_PES(0) = beta2_deformation
-    bet2_PES(0) = beta4_deformation
+    bet3_PES(0) = beta3_deformation   !MCedit-NS
+    bet4_PES(0) = beta4_deformation
     Do i=1,npoints
-       Read(unit_PES,*) Z_PES(i),N_PES(i),(Q_PES(i,j),j=1,ndefs),bet2_PES(i),bet4_PES(i)
+       Read(unit_PES,*) Z_PES(i),N_PES(i),(Q_PES(i,j),j=1,ndefs),bet2_PES(i),bet3_PES(i),bet4_PES(i)   !MCedit-NS
     End Do
     !
     Close(unit_PES)
@@ -264,8 +291,15 @@ end module HFBTHO_large_scale
 !>
 !> @author
 !> Rodrigo Navarro Perez
+!> 05/25/18 Edited by Yuchen Cao (Maxwell), cao -at- nscl.msu.edu
+!> Edit1: Implemented Q30 to masstable mode I/O
+!> Edit2: Modified MPI routines to reduce load imbalance (previously
+!> static scheduling), removed bug where certain rank can end entire
+!> job upon completion.
+!> Edit1 requires benchmark 05/25/18
+!> Edit2 still in process 05/25/18
 !----------------------------------------------------------------------
-!  Subroutines: - Create_MPI_teams
+!  Subroutines: - Create_MPI_teams / Call condition: DRIP_LINES == 1
 !               - Construct_Vectors
 !               - broadcast_vectors
 !               - allocate_mpi_vectors
@@ -294,42 +328,14 @@ Contains
   !=======================================================================
   subroutine Create_MPI_Teams
     implicit none
-    integer :: i,GROUP_leaders,GROUP_world
-    integer, allocatable  :: leaders_ranks(:)
-    integer :: leaders_size, leaders_rank
     !Determine number of teams (each team must have at most 11 members)
     number_teams = (mpi_size-1)/number_deformations + 1
     team_color = mod(mpi_taskid,number_teams)
     !Create Team communicators by splitting the world communicator
-    call MPI_COMM_SPLIT(MPI_COMM_WORLD,team_color,mpi_taskid,COMM_team,&
-         ierr_mpi)
+    call MPI_COMM_SPLIT(MPI_COMM_WORLD,team_color,mpi_taskid,COMM_team,ierr_mpi)
     !Get size team and rank within the team
     call MPI_COMM_SIZE(COMM_team, team_size, ierr_mpi)
     call MPI_COMM_RANK(COMM_team, team_rank, ierr_mpi)
-
-    ! !The processes ranked first in the world group will be team leaders
-    ! allocate(leaders_ranks(0:number_teams-1))
-    ! do i = 0,number_teams-1
-    !    leaders_ranks(i) = i
-    ! enddo
-    ! ! Get a handle on the world group
-    ! call MPI_COMM_GROUP(MPI_COMM_WORLD,GROUP_world,ierr_mpi)
-    ! ! Put leaders into the group and create leaders communicator
-    ! call MPI_GROUP_INCL(GROUP_world,number_teams,leaders_ranks,&
-    !      GROUP_leaders,ierr_mpi)
-    ! call MPI_COMM_CREATE(MPI_COMM_WORLD,GROUP_leaders,COMM_leaders,&
-    !      ierr_mpi)
-
-    ! !For leaders only,
-    ! !get number of leathers (must be equal to number of teams) and
-    ! !rank within the leaders (must be equal to the rank within the world)
-    ! if(COMM_leaders.ne.MPI_COMM_NULL) then
-    !    call MPI_COMM_SIZE(COMM_leaders, leaders_size, ierr_mpi)
-    !    call MPI_COMM_RANK(COMM_leaders, leaders_rank, ierr_mpi)
-    ! else
-    !    leaders_size = -1
-    !    leaders_rank = -1
-    ! endif
   end subroutine Create_MPI_Teams
   !=======================================================================
   !>  After the master process has read the 'hfbtho_NAMELIST.dat' and
@@ -344,15 +350,24 @@ Contains
   !=======================================================================
   subroutine Construct_Vectors
     implicit none
-    integer :: i,j
+    integer :: i,j,ntot     !MCedit-NS
 #if(DO_PES==1)
     allocate(vector_sizes(1:5))
 #else
+    ! Potentially need to be able to read in column number, for more types of constraint input
+    ! i.e. vector_sizes(5) = column #
+    ! MCcomment 6/12/18
     allocate(vector_sizes(1:4))
 #endif
+    ! Basically n_real_masstable_in is the number of reals per row in hfbtho_MASSTABLE.dat you want
+    ! It is defined in variables.f90. 27 / 12 is the default number of int/real needed from hfbtho_NAMELIST.dat
+    ! I added beta3_deformation for future use of beta3 basis deformation,
+    ! thus beta3_deformation should be added in NAMELIST between beta2_def... and beta4_def...
+    ! the vector_sizes here are used for MPI broadcast, it's crucial to get them right
+    ! MCcomment 06/12/18
     vector_sizes(1) = 27 + 2*lambdamax +  n_int_masstable_in*nRows + ndefs! integers
-    vector_sizes(2) = 11 +   lambdamax + n_real_masstable_in*nRows ! reals
-    vector_sizes(3) = 12 ! boolean
+    vector_sizes(2) = 12 +   lambdamax + n_real_masstable_in*nRows ! reals ! MCedit 06/12/18, changed 11+ into 12+
+    vector_sizes(3) = 12 ! booleans (logical)
     vector_sizes(4) =  nRows
 #if(DO_PES==1)
     vector_sizes(5) =  ndefs
@@ -361,98 +376,155 @@ Contains
     allocate(vector_real_mpi(1:vector_sizes(2)))
     allocate( vector_log_mpi(1:vector_sizes(3)))
     ! Inputs of type 'integer'
-    vector_int_mpi( 1) = number_of_shells
-    vector_int_mpi( 2) = proton_number
-    vector_int_mpi( 3) = neutron_number
-    vector_int_mpi( 4) = type_of_calculation
-    vector_int_mpi( 5) = number_iterations
-    vector_int_mpi( 6) = type_of_coulomb
-    vector_int_mpi( 7) = restart_file
-    vector_int_mpi( 8) = projection_is_on
-    vector_int_mpi( 9) = gauge_points
-    vector_int_mpi(10) = delta_Z
-    vector_int_mpi(11) = delta_N
-    vector_int_mpi(12) = switch_to_THO
-    vector_int_mpi(13) = number_Gauss
-    vector_int_mpi(14) = number_Laguerre
-    vector_int_mpi(15) = number_Legendre
-    vector_int_mpi(16) = number_states
-    vector_int_mpi(17) = print_time
+    !MCedit-NS
+    ntot = 1
+    vector_int_mpi(ntot) = number_of_shells
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = proton_number
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = neutron_number
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = type_of_calculation
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = number_iterations
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = type_of_coulomb
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = restart_file
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = projection_is_on
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = gauge_points
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = delta_Z
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = delta_N
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = switch_to_THO
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = number_Gauss
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = number_Laguerre
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = number_Legendre
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = number_states
+    ntot = ntot + 1
+    vector_int_mpi(ntot) = print_time
+    !MCedit-NS
     do i = 1,5
-       vector_int_mpi(17+i) =  proton_blocking(i)
-       vector_int_mpi(22+i) = neutron_blocking(i)
+       vector_int_mpi(ntot+i) =  proton_blocking(i)       !MCedit-NS
+       vector_int_mpi(ntot+5+i) = neutron_blocking(i)     !MCedit-NS
     enddo
+    ntot = ntot + 2*5 ! should be 27 now     !MCedit-NS
     do i = 1,lambdamax
-       vector_int_mpi(27+i) = lambda_values(i)
-       vector_int_mpi(27+lambdamax+i) = lambda_active(i)
+       vector_int_mpi(ntot+i) = lambda_values(i)                !MCedit-NS
+       vector_int_mpi(ntot+lambdamax+i) = lambda_active(i)      !MCedit-NS
     enddo
+    ntot = ntot + 2*lambdamax         !MCedit-NS
 #if(DO_MASSTABLE==1)
     do i = 1,nRows
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1) = Z_masstable(i)
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2) = N_masstable(i)
+       vector_int_mpi(ntot+n_int_masstable_in*(i-1)+1) = Z_masstable(i)         !MCedit-NS
+       vector_int_mpi(ntot+n_int_masstable_in*(i-1)+2) = N_masstable(i)         !MCedit-NS
     enddo
 #endif
 #if(DO_PES==1)
     Do i = 1,npoints
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1) = Z_PES(i)
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2) = N_PES(i)
+       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1) = Z_PES(i)       !MCedit 10/03/18
+       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2) = N_PES(i)       !MCedit 10/03/18
     End Do
     Do j = 1, ndefs
-       vector_int_mpi(27 + 2*lambdamax +  n_int_masstable_in*npoints + j) = lambda_PES(j)
+       vector_int_mpi(ntot +  n_int_masstable_in*npoints + j) = lambda_PES(j)   !MCedit-NS
     End Do
 #endif
 #if(DRIP_LINES==1)
     do i = 1,nRows
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1) = Z_stable_line(i)
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2) = N_stable_line(i)
-       vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+3) = direction_sl(i)
+       vector_int_mpi(ntot+n_int_masstable_in*(i-1)+1) = Z_stable_line(i)      !MCedit-NS
+       vector_int_mpi(ntot+n_int_masstable_in*(i-1)+2) = N_stable_line(i)      !MCedit-NS
+       vector_int_mpi(ntot+n_int_masstable_in*(i-1)+3) = direction_sl(i)       !MCedit-NS
     enddo
 #endif
     ! Inputs of type 'real'
-    vector_real_mpi( 1) = oscillator_length
-    vector_real_mpi( 2) = basis_deformation
-    vector_real_mpi( 3) = beta2_deformation
-    vector_real_mpi( 4) = beta4_deformation
-    vector_real_mpi( 5) = accuracy
-    vector_real_mpi( 6) = temperature
-    vector_real_mpi( 7) = vpair_n
-    vector_real_mpi( 8) = vpair_p
-    vector_real_mpi( 9) = pairing_cutoff
-    vector_real_mpi(10) = pairing_feature
-    vector_real_mpi(11) = neck_value
+    !MCedit-NS
+    ntot = 1
+    vector_real_mpi(ntot) = oscillator_length
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = basis_deformation
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = beta2_deformation
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = beta3_deformation       !MCedit-NS beta3_deformation moved in there
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = beta4_deformation
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = accuracy
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = temperature
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = vpair_n
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = vpair_p
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = pairing_cutoff
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = pairing_feature
+    ntot = ntot + 1
+    vector_real_mpi(ntot) = neck_value
+    !MCedit-NS
     do i = 1,lambdamax
-       vector_real_mpi(11+i) = expectation_values(i)
+       vector_real_mpi(ntot+i) = expectation_values(i)    !MCedit 05/28/18 !MCedit-NS
     enddo
+    ntot = ntot + lambdamax
 #if(DO_MASSTABLE==1)
     do i = 1,nRows
-       vector_real_mpi(11+lambdamax+n_real_masstable_in*(i-1)+1) = Q20_masstable(i)
-       vector_real_mpi(11+lambdamax+n_real_masstable_in*(i-1)+2) = beta_masstable(i)
+       ! Should probably change the '11' to '12' b/c I added a row of input (beta3_deformation)
+       ! above. n_real_masstable_in=3 defined in variables.f90, should equal to number of columns
+       ! of real inputs in hfbtho_MASSTABLE.dat, we could make it a read-in parameter
+       ! next to nrows in the input file. MCcomment
+       vector_real_mpi(ntot+n_real_masstable_in*(i-1)+1) = Q20_masstable(i)             !MCedit 06/05/18 !MCedit-NS
+       vector_real_mpi(ntot+n_real_masstable_in*(i-1)+2) = Q30_masstable(i)             !MCedit 06/05/18 !MCedit-NS
+       vector_real_mpi(ntot+n_real_masstable_in*(i-1)+3) = beta_masstable(i)            !MCedit 05/25/18 !MCedit-NS
     enddo
 #endif
 #if(DO_PES==1)
     Do j=1,ndefs
        Do i=1,npoints
-          vector_real_mpi(11+lambdamax + (j-1)*npoints + i) = Q_PES(i,j)
+          vector_real_mpi(ntot + (j-1)*npoints + i) = Q_PES(i,j)        !MCedit 06/05/18 !MCedit-NS
        End Do
     End Do
     Do i=1,npoints
-       vector_real_mpi(11+lambdamax + ndefs   *npoints + i) = bet2_PES(i)
-       vector_real_mpi(11+lambdamax +(ndefs+1)*npoints + i) = bet4_PES(i)
+       vector_real_mpi(ntot + ndefs   *npoints + i) = bet2_PES(i)       !MCedit 06/05/18 !MCedit-NS
+       vector_real_mpi(ntot +(ndefs+1)*npoints + i) = bet3_PES(i)       !MCedit-NS
+       vector_real_mpi(ntot +(ndefs+1)*npoints + i) = bet4_PES(i)       !MCedit 06/05/18 !MCedit-NS
     End Do
 #endif
     ! Inputs of type 'logical'
-    vector_log_mpi( 1) = add_initial_pairing
-    vector_log_mpi( 2) = set_temperature
-    vector_log_mpi( 3) = collective_inertia
-    vector_log_mpi( 4) = fission_fragments
-    vector_log_mpi( 5) = pairing_regularization
-    vector_log_mpi( 6) = localization_functions
-    vector_log_mpi( 7) = set_neck_constrain
-    vector_log_mpi( 8) = compatibility_HFODD
-    vector_log_mpi( 9) = force_parity
-    vector_log_mpi(10) = user_pairing
-    vector_log_mpi(11) = automatic_basis
-    vector_log_mpi(12) = include_3N_force
+    !MCedit-NS
+    ntot = 1
+    vector_log_mpi(ntot) = add_initial_pairing
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = set_temperature
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = collective_inertia
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = fission_fragments
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = pairing_regularization
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = localization_functions
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = set_neck_constrain
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = compatibility_HFODD
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = force_parity
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = user_pairing
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = automatic_basis
+    ntot = ntot + 1
+    vector_log_mpi(ntot) = include_3N_force
+    !MCedit-NS
   end subroutine Construct_Vectors
   !=======================================================================
   !>  The master process broadcasts first the vector_sizes arrays, the
@@ -495,6 +567,7 @@ Contains
     allocate(   Z_masstable(0:nRows))
     allocate(   N_masstable(0:nRows))
     allocate( Q20_masstable(0:nRows))
+    allocate( Q30_masstable(0:nRows))   !MCedit 05/25/18
     allocate(beta_masstable(0:nRows))
 #endif
 #if(DO_PES==1)
@@ -503,6 +576,7 @@ Contains
     Allocate(lambda_PES(1:ndefs))
     Allocate(Q_PES(0:npoints,1:ndefs))
     Allocate(bet2_PES(0:npoints))
+    Allocate(bet3_PES(0:npoints))   !MCedit-NS
     Allocate(bet4_PES(0:npoints))
 #endif
 #if(DRIP_LINES==1)
@@ -518,100 +592,149 @@ Contains
   !=======================================================================
   subroutine Deconstruct_Vectors
     implicit none
-    integer :: i,j
+    integer :: i,j,ntot
     ! Inputs of type 'integer'
-    number_of_shells    = vector_int_mpi( 1)
-    proton_number       = vector_int_mpi( 2)
-    neutron_number      = vector_int_mpi( 3)
-    type_of_calculation = vector_int_mpi( 4)
-    number_iterations   = vector_int_mpi( 5)
-    type_of_coulomb     = vector_int_mpi( 6)
-    restart_file        = vector_int_mpi( 7)
-    projection_is_on    = vector_int_mpi( 8)
-    gauge_points        = vector_int_mpi( 9)
-    delta_Z             = vector_int_mpi(10)
-    delta_N             = vector_int_mpi(11)
-    switch_to_THO       = vector_int_mpi(12)
-    number_Gauss        = vector_int_mpi(13)
-    number_Laguerre     = vector_int_mpi(14)
-    number_Legendre     = vector_int_mpi(15)
-    number_states       = vector_int_mpi(16)
-    print_time          = vector_int_mpi(17)
+    ntot = 1
+    number_of_shells    = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    proton_number       = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    neutron_number      = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    type_of_calculation = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    number_iterations   = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    type_of_coulomb     = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    restart_file        = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    projection_is_on    = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    gauge_points        = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    delta_Z             = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    delta_N             = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    switch_to_THO       = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    number_Gauss        = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    number_Laguerre     = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    number_Legendre     = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    number_states       = vector_int_mpi(ntot)
+    ntot = ntot + 1
+    print_time          = vector_int_mpi(ntot)
     do i = 1,5
-       proton_blocking(i)  = vector_int_mpi(17+i)
-       neutron_blocking(i) = vector_int_mpi(22+i)
+       proton_blocking(i)  = vector_int_mpi(ntot+i)       !MCedit-NS
+       neutron_blocking(i) = vector_int_mpi(ntot+5+i)     !MCedit-NS
     enddo
+    ntot = ntot + 2*5 ! should be 27 now    !MCedit-NS
     do i = 1,lambdamax
-       lambda_values(i) = vector_int_mpi(27+i)
-       lambda_active(i) = vector_int_mpi(27+lambdamax+i)
+       lambda_values(i) = vector_int_mpi(ntot+i)                !MCedit-NS
+       lambda_active(i) = vector_int_mpi(ntot+lambdamax+i)      !MCedit-NS
     enddo
+    ntot = ntot + 2*lambdamax       !MCedit-NS
 #if(DO_MASSTABLE==1)
     do i = 1,nRows
-       Z_masstable(i) = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1)
-       N_masstable(i) = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2)
+       Z_masstable(i) = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+1)    !MCedit-NS
+       N_masstable(i) = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+2)    !MCedit-NS
     enddo
 #endif
 #if(DO_PES==1)
     Do i = 1,npoints
-       Z_PES(i) = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1)
-       N_PES(i) = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2)
+       Z_PES(i) = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+1)    !MCedit-NS
+       N_PES(i) = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+2)    !MCedit-NS
     End Do
     Do j = 1, ndefs
-       lambda_PES(j) = vector_int_mpi(27 + 2*lambdamax +  n_int_masstable_in*npoints + j)
+       lambda_PES(j) = vector_int_mpi(ntot +  n_int_masstable_in*npoints + j)    !MCedit-NS
     End Do
 #endif
 #if(DRIP_LINES==1)
     do i = 1,nRows
-       Z_stable_line(i) = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+1)
-       N_stable_line(i) = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+2)
-       direction_sl(i)  = vector_int_mpi(27+2*lambdamax+n_int_masstable_in*(i-1)+3)
+       Z_stable_line(i) = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+1)       !MCedit-NS
+       N_stable_line(i) = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+2)       !MCedit-NS
+       direction_sl(i)  = vector_int_mpi(ntot+n_int_masstable_in*(i-1)+3)       !MCedit-NS
     enddo
 #endif
     ! Inputs of type 'real'
-    oscillator_length = vector_real_mpi( 1)
-    basis_deformation = vector_real_mpi( 2)
-    beta2_deformation = vector_real_mpi( 3)
-    beta4_deformation = vector_real_mpi( 4)
-    accuracy          = vector_real_mpi( 5)
-    temperature       = vector_real_mpi( 6)
-    vpair_n           = vector_real_mpi( 7)
-    vpair_p           = vector_real_mpi( 8)
-    pairing_cutoff    = vector_real_mpi( 9)
-    pairing_feature   = vector_real_mpi(10)
-    neck_value        = vector_real_mpi(11)
+    !MCedit-NS
+    ntot = 1
+    oscillator_length = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    basis_deformation = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    beta2_deformation = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    beta3_deformation = vector_real_mpi(ntot)   !MCedit-NS beta3_deformation moved here
+    ntot = ntot + 1
+    beta4_deformation = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    accuracy          = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    temperature       = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    vpair_n           = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    vpair_p           = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    pairing_cutoff    = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    pairing_feature   = vector_real_mpi(ntot)
+    ntot = ntot + 1
+    neck_value        = vector_real_mpi(ntot)
+    !MCedit-NS
     do i = 1,lambdamax
-       expectation_values(i) =  vector_real_mpi(11+i)
+       expectation_values(i) =  vector_real_mpi(ntot+i)       !MCedit-NS
     enddo
+    ntot = ntot + lambdamax     !MCedit-NS
 #if(DO_MASSTABLE==1)
     do i = 1,nRows
-        Q20_masstable(i) = vector_real_mpi(11+lambdamax+n_real_masstable_in*(i-1)+1)
-       beta_masstable(i) = vector_real_mpi(11+lambdamax+n_real_masstable_in*(i-1)+2)
+        Q20_masstable(i) = vector_real_mpi(ntot+n_real_masstable_in*(i-1)+1)    !MCedit 06/05/18 !MCedit-NS
+        Q30_masstable(i) = vector_real_mpi(ntot+n_real_masstable_in*(i-1)+2)    !MCedit 06/05/18 !MCedit-NS
+       beta_masstable(i) = vector_real_mpi(ntot+n_real_masstable_in*(i-1)+3)    !MCedit 06/05/18 !MCedit-NS
     enddo
 #endif
 #if(DO_PES==1)
     Do j=1,ndefs
        Do i=1,npoints
-          Q_PES(i,j) = vector_real_mpi(11+lambdamax + (j-1)*npoints + i)
+          Q_PES(i,j) = vector_real_mpi(ntot + (j-1)*npoints + i)        !MCedit 06/05/18 !MCedit-NS
        End Do
     End Do
     Do i=1,npoints
-        bet2_PES(i) = vector_real_mpi(11+lambdamax + ndefs   *npoints + i)
-        bet4_PES(i) = vector_real_mpi(11+lambdamax +(ndefs+1)*npoints + i)
+        bet2_PES(i) = vector_real_mpi(ntot + ndefs   *npoints + i)      !MCedit 06/05/18 !MCedit-NS
+        bet3_PES(i) = vector_real_mpi(ntot +(ndefs+1)*npoints + i)      !MCedit-NS
+        bet4_PES(i) = vector_real_mpi(ntot +(ndefs+2)*npoints + i)      !MCedit 06/05/18 !MCedit-NS
     End Do
 #endif
     ! Inputs of type 'logical'
-    add_initial_pairing    = vector_log_mpi( 1)
-    set_temperature        = vector_log_mpi( 2)
-    collective_inertia     = vector_log_mpi( 3)
-    fission_fragments      = vector_log_mpi( 4)
-    pairing_regularization = vector_log_mpi( 5)
-    localization_functions = vector_log_mpi( 6)
-    set_neck_constrain     = vector_log_mpi( 7)
-    compatibility_HFODD    = vector_log_mpi( 8)
-    force_parity           = vector_log_mpi( 9)
-    user_pairing           = vector_log_mpi(10)
-    automatic_basis        = vector_log_mpi(11)
-    include_3N_force       = vector_log_mpi(12)
+    ntot = 1
+    add_initial_pairing    = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    set_temperature        = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    collective_inertia     = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    fission_fragments      = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    pairing_regularization = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    localization_functions = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    set_neck_constrain     = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    compatibility_HFODD    = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    force_parity           = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    user_pairing           = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    automatic_basis        = vector_log_mpi(ntot)
+    ntot = ntot + 1
+    include_3N_force       = vector_log_mpi(ntot)
   end subroutine Deconstruct_Vectors
   !=======================================================================
   !>  Every process allocates the vectors that will be gathered by
@@ -620,11 +743,15 @@ Contains
   subroutine allocate_out_vectors
     implicit none
     deallocate(vector_sizes,vector_int_mpi,vector_real_mpi,vector_log_mpi)
+    ! Defines how many rows from HFBTHO_masstable.dat input does each task get. MC 9/4/18
     nrows_task = nrows/mpi_size
     if(mpi_taskid.gt.0.and.mpi_taskid.le.mod(nrows,mpi_size)) then
+    ! If there's remainder, the first tasks (except 0) get more rows to work with. MC 9/4/18
        nrows_task = nrows_task + 1
     endif
     allocate(vector_sizes(1:2))
+    ! n_int_masstable_out=3 and n_real_masstable_out=10 are defined in variables.f90:302
+    ! These 2 integers correspond to the number of output variable at the end of this subroutine
     vector_sizes(1) = n_int_masstable_out*nrows_task
     vector_sizes(2) = n_real_masstable_out*nrows_task
     allocate( vector_int_mpi(1:vector_sizes(1)))
@@ -656,15 +783,19 @@ Contains
        vector_int_mpi(n_int_masstable_out*icalc+2) = Z_masstable(iRow)
        vector_int_mpi(n_int_masstable_out*icalc+3) = N_masstable(iRow)
        vector_real_mpi(n_real_masstable_out*icalc+1) = Q20_masstable(iRow)
-       vector_real_mpi(n_real_masstable_out*icalc+2) = beta_masstable(iRow)
+       vector_real_mpi(n_real_masstable_out*icalc+2) = Q30_masstable(iRow)      !MCedit 05/25/18
+       vector_real_mpi(n_real_masstable_out*icalc+3) = beta_masstable(iRow)      !MCedit 05/25/18
        if(kindhfb_INI.gt.0) then
-          vector_real_mpi(n_real_masstable_out*icalc+3) = ehfb
+          vector_real_mpi(n_real_masstable_out*icalc+4) = ehfb          !MCedit 06/12/18 shift back by 1
        else
-          vector_real_mpi(n_real_masstable_out*icalc+3) = etot
+          vector_real_mpi(n_real_masstable_out*icalc+4) = etot          !MCedit 06/12/18 shift back by 1
        endif
-       vector_real_mpi(n_real_masstable_out*icalc+4) = qmoment(2,1)
-       vector_real_mpi(n_real_masstable_out*icalc+5) = qmoment(2,2)
-       vector_real_mpi(n_real_masstable_out*icalc+6) = qmoment(2,3)
+       vector_real_mpi(n_real_masstable_out*icalc+5) = qmoment(2,1)     !MCedit 06/12/18 shift back by 1
+       vector_real_mpi(n_real_masstable_out*icalc+6) = qmoment(2,2)     !MCedit 06/12/18 shift back by 1
+       vector_real_mpi(n_real_masstable_out*icalc+7) = qmoment(2,3)     !MCedit 06/12/18 shift back by 1
+       vector_real_mpi(n_real_masstable_out*icalc+8) = qmoment(3,1)     !MCedit 06/12/18
+       vector_real_mpi(n_real_masstable_out*icalc+9) = qmoment(3,2)     !MCedit 06/12/18
+       vector_real_mpi(n_real_masstable_out*icalc+10)= qmoment(3,3)     !MCedit 06/12/18
   end subroutine fill_out_vectors
   !=======================================================================
   !>  The master process gathers the result from all calculations
@@ -684,7 +815,6 @@ Contains
     endif
     call mpi_gather(vector_sizes,2,mpi_integer,vector_sizes_gthr,2,&
          mpi_integer,0,mpi_comm_world,ierr_mpi)
-
     if(mpi_taskid.eq.0) then
        disp_int = 0
        disp_real = 0
@@ -717,11 +847,15 @@ Contains
        allocate(Z_out(1:nrows))
        allocate(N_out(1:nrows))
        allocate(Q20_in(1:nrows))
+       allocate(Q30_in(1:nrows))    !MCedit 05/25/18
        allocate(beta_in(1:nrows))
        allocate(E_HFB_out(1:nrows))
        allocate(Q20Z_out(1:nrows))
        allocate(Q20N_out(1:nrows))
        allocate(Q20T_out(1:nrows))
+       allocate(Q30Z_out(1:nrows))  !MCedit 05/25/18
+       allocate(Q30N_out(1:nrows))  !MCedit 05/25/18
+       allocate(Q30T_out(1:nrows))  !MCedit 05/25/18
        do i = 1,mpi_size
           do j = 1,vector_sizes_int_gthr(mod(i,mpi_size))/n_int_masstable_out
              ierrors_out(mpi_size*(j-1)+i) = vector_int_gthr(vector_disp_int_gthr(mod(i,mpi_size))+n_int_masstable_out*(j-1)+1)
@@ -730,15 +864,19 @@ Contains
           enddo
           do j = 1,vector_sizes_real_gthr(mod(i,mpi_size))/n_real_masstable_out
                 Q20_in(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+1)
-               beta_in(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+2)
-             E_HFB_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+3)
-              Q20Z_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+4)
-              Q20N_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+5)
-              Q20T_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+6)
+                Q30_in(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+2)  !MCedit 05/25/18
+               beta_in(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+3)
+             E_HFB_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+4)
+              Q20Z_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+5)  !MCedit 05/25/18
+              Q20N_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+6)  !MCedit 05/25/18
+              Q20T_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+7)  !MCedit 05/25/18
+              Q30Z_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+8)  !MCedit 05/25/18
+              Q30N_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+9)  !MCedit 05/25/18
+              Q30T_out(mpi_size*(j-1)+i) = vector_real_gthr(vector_disp_real_gthr(mod(i,mpi_size))+n_real_masstable_out*(j-1)+10) !MCedit 05/25/18
+
           enddo
        enddo
     endif
-
   end subroutine gather_results
 
 end module HFBTHO_mpi_communication

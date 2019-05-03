@@ -136,8 +136,8 @@ module hfbtho_gogny
 #if(GOGNY_SYMMETRIES==0)
   real(pr), Public, allocatable  :: Vz_Gogny(:,:,:,:,:) !< Matrix elements of the Gogny force in the z-direction
                                                         !< \f$ \langle n_z m_z | \hat{V} | n'_z m'_z \rangle \f$
-    real(pr), Public, allocatable  ::Vr_Gogny(:,:,:,:,:,:,:,:,:) !< Matrix elements of the Gogny force in the perpendicular direction
-                                                !< \f$ \langle n_r \Lambda_n m_r \Lambda_m | \hat{V} | n'_r \Lambda'_n m'_r \Lambda'_m \rangle \f$
+  real(pr), Public, allocatable  :: Vr_Gogny(:,:,:,:,:,:,:,:,:) !< Matrix elements of the Gogny force in the perpendicular direction
+                                                                !< \f$ \langle n_r \Lambda_n m_r \Lambda_m | \hat{V} | n'_r \Lambda'_n m'_r \Lambda'_m \rangle \f$
 #endif
   logical, Public :: matrix_elements_calculated
   ! Private variables

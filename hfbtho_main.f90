@@ -1,4 +1,4 @@
-!***********************************************************************
+ !***********************************************************************
 !
 !    Copyright (c) 2012, Lawrence Livermore National Security, LLC.
 !                        Produced at the Lawrence Livermore National
@@ -90,6 +90,11 @@ End Program hfbthoprog
     Integer(ipr) :: iblocase(2),nkblocase(2,5)
     Integer(ipr) :: i,it,icount,jcount,l,noForce,icalc
     Integer(ipr) :: j, ib, mu, nu, lambda
+    Integer(ipr) :: slave_id, iRow0, z_0, n_0, ii, nRows0 !MCedit 1/12/19
+    Integer :: mpi_status(MPI_STATUS_SIZE),mpi_request !MCedit 1/14/19 Comment this line if serial
+    !Integer(ipr), dimension(7) :: unfin_rows
+    ! MCedit 1/18/19 temporary array construct to re-calculate unfinished rows due to HPC crashes
+    double precision :: beta3, Q20_0, Q30_0, beta2_0, beta3_0, slave_time       !MCedit 1/12/19
     Logical :: file_exists
     ! Initialize MPI environment and possibly create subcommunicators
 #if(USE_MPI==2)
@@ -149,7 +154,7 @@ End Program hfbthoprog
 #endif
     ! Overwrite basis characteristics if so requested
 #if(USE_MPI==0)
-    If(lambda_active(2).Gt.0 .And. automatic_basis) Call adjust_basis(expectation_values(2), .False.) !MCedit-NS
+    If(lambda_active(2).Gt.0 .And. automatic_basis) Call adjust_basis(expectation_values(2),.False.) !MCedit-NS
 #endif
     !-------------------------------------------------------------------
     ! Allocation of vectors for mass tables
@@ -172,25 +177,77 @@ End Program hfbthoprog
     !team leader creates a file for bookkeeping
     if(mpi_taskid.eq.0) then
        open(127,file='TableLog.dat')
+       write(127,*) "Row     Z    N         beta2            beta3           Q20         Q30        Task_ID"
+       write(*,*) "Total row number:",nRows
+       !MCedit 1/19/19
     endif
-    !loop over elements of the mass table
-    do iRow = 0,nRows
+    ! <unfin_rows> array is used when we only need specific rows done and
+    ! don't want to overwrite any other thoout_* files, useful when there is frozen tasks MCedit 1/22/19
+    !unfin_rows = (/13399, 13439, 13697, 13844, 13850, 13883, -1/) 
+    do iRow0 = 1,nRows+1   ! iRow0 = 1,nRows+1 . The extra loop is for sending out exit signal
+       ! Attempting to use dynamic scheduling, re-wrote most of DO_MASSTABLE==1 portion.
+       ! Task 0 will be master, for book keeping, iRow only means row number for master process,
+       ! for all slave processes this just serves as a loop index.  MCedit 1/14/19
+       nRows0 = nRows
+       !nRows0 = 6  ! when doing specific rows that crashed, set this to # rows  needed to be done, this equals len(unfin_rows) - 1,
+                     ! MCedit 1/29/19
+       if (mpi_taskid .eq. 0) then
+          slave_id = 0
+          iRow = iRow0 
+          !iRow = unfin_rows(iRow0) ! when doing specific rows that crashed MCedit 1/29/19
+          z_0 = Z_masstable(iRow)
+          n_0 = N_masstable(iRow)
+          Q20_0 = Q20_masstable(iRow)!beta_deformation*sqrt(5/pi)*(A_chain)**(5/3._pr)/100._pr
+          Q30_0 = Q30_masstable(iRow)        !MCedit 05/26/18
+          beta2_0 = beta_masstable(iRow)
+          beta3_0 = 2424.068 * Q30_0 / (z_0+n_0)**2
+          ! beta3_0 = ANINT(beta3_0 * 100.0) / 100.0   ! keep beta3_0 to only 2 decimals
+          if (iRow0 .le. nRows0) then
+              call MPI_Recv(slave_id,1,MPI_integer,MPI_ANY_SOURCE,0,mpi_comm_world,mpi_status,ierr_mpi)
+              call MPI_Send(iRow,1,MPI_integer,slave_id,1,mpi_comm_world,ierr_mpi)
+              write(127,"(3i6,4f15.8,i6,a)") iRow,z_0,n_0,beta2_0,beta3_0,Q20_0,Q30_0,slave_id
+          endif
+          if (iRow0 .eq. nRows0+1) then
+              do ii = 1, mpi_size-1
+                  call MPI_Recv(slave_id,1,MPI_integer,MPI_ANY_SOURCE,0,mpi_comm_world,mpi_status,ierr_mpi)
+                  call MPI_Send(iRow,1,MPI_integer,slave_id,1,mpi_comm_world,ierr_mpi)
+              enddo
+              call mpi_barrier(MPI_COMM_WORLD,ierr_mpi)
+              exit
+          endif
+       endif
+     if (mpi_taskid .gt. 0) then
+       iRow = 0
+       call MPI_Send(mpi_taskid,1,MPI_integer,0,0,mpi_comm_world,ierr_mpi)
+       call MPI_Recv(iRow,1,MPI_integer,0,1,mpi_comm_world,mpi_status,ierr_mpi)
+       write(*,*) "Task",mpi_taskid,"received row",iRow,"from MASTER"
+     if (iRow .eq. nRows0+1) then  
+     !if (iRow .eq. -1) then   ! use this when doing specific rows that crashed MCedit 1/29/19
+           write(*,*) "Task",mpi_taskid,"received exit signal iRow = ",iRow,"from MASTER"
+           call mpi_barrier(MPI_COMM_WORLD,ierr_mpi)
+           exit
+       endif
+       Write(row_string,'("_",i6.6)') iRow
+       slave_time = MPI_Wtime()
        Z_chain = Z_masstable(iRow)
        N_chain = N_masstable(iRow)
        A_chain = Z_chain+N_chain
        beta_deformation = beta_masstable(iRow)
-       Q20 = Q20_masstable(iRow)!beta_deformation*sqrt(5/pi)*(A_chain)**(5/3._pr)/100._pr
-       write(row_string,'("_",i6.6)') irow
-       if(irow.eq.0.and.nrows.gt.0) cycle
-       if(mpi_taskid.eq.0) then
-          write(127,'(a7,2i5,2f15.8)') row_string,Z_chain,N_chain,Q20,beta_deformation
-       endif
-       !only do the calculations that correspond to your task id
-       if(mod(irow,mpi_size).ne.mpi_taskid) cycle
+       Q20 = Q20_masstable(iRow) !beta_deformation*sqrt(5/pi)*(A_chain)**(5/3._pr)/100._pr
+       Q30 = Q30_masstable(iRow)        !MCedit 05/26/18
+       beta3 = 2424.068 * Q30 / A_chain**2
        proton_number  = Z_chain
        neutron_number = N_chain
        expectation_values(2) = Q20
+       expectation_values(3) = Q30                       !MCedit 05/26/18
        basis_deformation = beta_deformation
+       beta2_deformation = beta_deformation      !MCedit 10/30/18 for woods-saxon initialization
+       beta3_deformation = beta3                         !MCedit 10/30/18
+       ! Lines below are for rounding purpose, when converting Q30 back to beta3 we introduce
+       ! rounding error, thus in some case beta3_in = 0.1, we get beta3 = 0.09998 sometimes.
+       beta3_deformation = 100.D0 * beta3_deformation  !MCedit 1/18/18
+       beta3_deformation = nint(beta3_deformation)     !MCedit 1/18/18
+       beta3_deformation = beta3_deformation / 100.D0  !MCedit 1/18/18
 #endif
     !-------------------------------------------------------------------
     ! Potential energy surface calculation
@@ -220,13 +277,12 @@ End Program hfbthoprog
           basis_deformation = bet2_PES(iRow)
           beta2_deformation = bet2_PES(iRow)
        End If
-       If(bet4_PES(iRow).Gt.-8.0) Then
-          beta4_deformation = bet4_PES(iRow)
-       End If
+       If(bet3_PES(iRow).Gt.-8.0) beta3_deformation = bet3_PES(iRow) !MCedit-NS
+       If(bet4_PES(iRow).Gt.-8.0) beta4_deformation = bet4_PES(iRow) !MCedit-NS
        Do j=1,ndefs
           lambda = lambda_PES(j)
           ! More advanced fit based on value of Q2 only
-          If(lambda.Eq.2 .And. automatic_basis) Call adjust_basis(Q_PES(iRow,j), .False.) !MCedit-NS
+          If(lambda.Eq.2 .And. automatic_basis) Call adjust_basis(Q_PES(iRow,j),.False.) !MCedit-NS
           expectation_values(lambda) = Q_PES(iRow,j)
           lambda_active(lambda) = 1
        End Do
@@ -285,7 +341,7 @@ End Program hfbthoprog
        !-------------------------------------------------------------------
        !memo: Namelist /HFBTHO_GENERAL/ number_of_shells,oscillator_length,&
        !                                proton_number,neutron_number,type_of_calculation
-       !      Namelist /HFBTHO_INITIAL/ beta2_deformation, beta4_deformation
+       !      Namelist /HFBTHO_INITIAL/ beta2_deformation, beta3_deformation, beta4_deformation
        !      Namelist /HFBTHO_ITERATIONS/ number_iterations, accuracy
        !      Namelist /HFBTHO_FUNCTIONAL/ functional, add_initial_pairing, type_of_coulomb
        !      Namelist /HFBTHO_CONSTRAINTS/ lambda_values, lambda_active, expectation_values
@@ -306,6 +362,7 @@ End Program hfbthoprog
        kindhfb_INI               = type_of_calculation    ! 1: HFB, -1: HFB+LN
        !
        b2_0                      = beta2_deformation      ! beta2 parameter of the initial WS solution
+       b3_0                      = beta3_deformation      ! beta3 parameter of the initial WS solution, MCedit 05/28/18
        b4_0                      = beta4_deformation      ! beta4 parameter of the initial WS solution
        !
        MAX_ITER_INI              = number_iterations      ! max number of iterations
@@ -471,7 +528,8 @@ End Program hfbthoprog
     !-------------------------------------------------------------------
 #if(DO_MASSTABLE==1)
        if(nrows.gt.0) then
-          write(*,'("task ",a6," finished row ",a6)') ID_string, row_string(2:7)
+          slave_time = (MPI_Wtime() - slave_time) / 60
+          write(*,'("task ",a6," finished row ",a6," in",f15.8," minutes")') ID_string, row_string(2:7), slave_time !MCedit 1/15/19
 #if(USE_MPI==2)
           call fill_out_vectors(icalc)
 #else
@@ -480,15 +538,24 @@ End Program hfbthoprog
           icalc = icalc + 1
        endif
        Close(lfile) ! close the output
+      endif  !endif for slave processes MCedit 01/12/19
     enddo
+    ! Above is enddo for "do iRow = 0, nRows" near line 177,
+    ! iRow loop over existing nrows, only task id satisfing mod(iRow,mpi_size) eq. mpi_taskid
+    ! doesn't get cycled and finishes the rest of the code till this enddo.
+    ! Thus only when one task finished all its tasks, does it reach this enddo. MCcomment 9/11/18
     if(nrows.gt.0) then
 #if(USE_MPI==2)
        call gather_results
+       call mpi_barrier(MPI_COMM_WORLD,ierr_mpi) !MCedit 10/01/18
 #endif
-       call print_mass_table
+       ! MCedit commented out print_mass_table subroutine, output not fixed under dynamic scheduling
+       ! using separate python code to extract data. MCedit 1/15/19
+       !call print_mass_table
     endif
-    if(team_rank.eq.0) then
-       close(127)
+    ! logic used to be ( team_rank eq. 0 ), actually TableLog only needs to be closed once? MCedit 9/12/18
+    if(mpi_taskid .eq. 0) then
+       close(127) !close TableLog.dat within #if(DO_MASSTABLE==1)
     endif
 #endif
     !-------------------------------------------------------------------
